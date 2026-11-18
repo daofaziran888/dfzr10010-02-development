@@ -7,10 +7,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.rollback import RollbackService
+from app.services.snapshot_cleanup import SnapshotCleanupService
 
 router = APIRouter(prefix="/api/rollback", tags=["数据回滚恢复"])
 
 service = RollbackService()
+cleanup_service = SnapshotCleanupService()
 
 LIST_FIELDS = ["记录编号", "表名称", "回滚版本", "回滚原因", "影响范围", "恢复耗时", "回滚时间", "回滚状态"]
 STATUSES = ["待回滚", "回滚中", "已回滚", "已恢复"]
@@ -28,6 +30,23 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/workbench", response_model=dict)
+def list_workbench() -> dict[str, Any]:
+    """回滚工作台待办：基于同一份数据表快照清理结果生成，与快照页保持一致。"""
+    todos = cleanup_service.list_workbench_todos()
+    return {"items": todos, "total": len(todos)}
+
+
+@router.post("/workbench/{todo_id}/verify", response_model=ActionResult)
+def verify_workbench(todo_id: int, payload: EntryPayload) -> ActionResult:
+    """核对单条待办：核对结论写回数据表快照清理结果，两侧同步。"""
+    conclusion = str(payload.values.get("核对结论") or "").strip()
+    row, message = cleanup_service.verify_todo(todo_id, conclusion)
+    if row is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=row)
 
 
 @router.get("/{entry_id}", response_model=dict)

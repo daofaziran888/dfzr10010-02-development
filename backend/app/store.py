@@ -8,6 +8,9 @@ from typing import Any
 
 from app.seed import SEED_ROWS
 
+# 内部状态表（保留策略、清理结果等）不算业务模块，运营概览里不统计。
+INTERNAL_MODULES = frozenset({"snapshot_policy", "snapshot_cleanup_result"})
+
 
 class Store:
     def __init__(self) -> None:
@@ -30,6 +33,8 @@ class Store:
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []
         for name in self.module_names():
+            if name in INTERNAL_MODULES:
+                continue
             rows = self.rows(name)
             modules.append({
                 "name": name,

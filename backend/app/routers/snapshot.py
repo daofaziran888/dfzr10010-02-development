@@ -7,10 +7,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.snapshot import SnapshotService
+from app.services.snapshot_cleanup import SnapshotCleanupService
 
 router = APIRouter(prefix="/api/snapshot", tags=["表快照管理"])
 
 service = SnapshotService()
+cleanup_service = SnapshotCleanupService()
 
 LIST_FIELDS = ["快照编号", "表名称", "快照时间", "快照版本", "快照大小", "保留天数", "创建方式", "快照状态"]
 STATUSES = ["已创建", "保留中", "已过期", "已清理"]
@@ -28,6 +30,35 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/policy", response_model=dict)
+def get_policy() -> dict[str, Any]:
+    """读取当前已确认的保留策略；重新进入页面时返回上次确认版本，不重新计算。"""
+    return cleanup_service.get_policy()
+
+
+@router.post("/policy", response_model=ActionResult)
+def confirm_policy(payload: EntryPayload) -> ActionResult:
+    """确认保留档位与保留边界：生成新策略版本，并按新边界重新生成清理结果。"""
+    tier = str(payload.values.get("保留档位") or "").strip()
+    boundary = str(payload.values.get("保留边界") or "").strip()
+    policy, message = cleanup_service.confirm_policy(tier, boundary)
+    if policy is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=policy)
+
+
+@router.get("/cleanup-result", response_model=dict)
+def get_cleanup_result() -> dict[str, Any]:
+    """读取已生成的数据表快照清理结果；页面刷新只读持久化数据，不覆盖清理依据。"""
+    return cleanup_service.get_cleanup_result()
+
+
+@router.post("/cleanup-result/refresh", response_model=dict)
+def refresh_cleanup_result() -> dict[str, Any]:
+    """按当前保留策略重新生成清理结果（显式触发，区别于页面刷新）。"""
+    return cleanup_service.refresh_cleanup_result()
 
 
 @router.get("/{entry_id}", response_model=dict)
